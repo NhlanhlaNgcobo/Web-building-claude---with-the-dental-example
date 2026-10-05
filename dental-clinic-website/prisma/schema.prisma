@@ -1,0 +1,405 @@
+// Harbour Dental Studio: appointment and commerce schema.
+//
+// Running on PostgreSQL. The schema was written so the move from the original
+// SQLite development database was a configuration change rather than a rewrite:
+//
+//   - Statuses are String columns backed by TypeScript unions and Zod schemas in
+//     lib/domain/enums.ts. Kept as String rather than converted to a native
+//     enum, because an enum needs a migration for every new status value and
+//     would fork the TypeScript types.
+//   - Money is Int cents, which is exact and needs no rounding decisions.
+//   - Recurring schedule times are Int minutes from local midnight, not
+//     DateTime. A recurring "08:00" is a wall clock fact, not an instant.
+//   - Concrete occurrences (appointments, blocks) are UTC DateTime instants.
+//   - There are no array columns anywhere. Eligibility and product
+//     relationships are explicit join tables, so nothing SQLite specific has to
+//     be unwound later.
+//
+// Double booking is prevented at three levels: the availability engine, a
+// re-check inside the booking transaction, and an exclusion constraint in
+// migration 20261005120000_appointment_overlap_constraint. See README.md.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------
+// People
+// ---------------------------------------------------------------------------
+
+model Patient {
+  id        String @id @default(cuid())
+  firstName String
+  lastName  String
+  email     String
+  /// lower(trim(email)). Written by the service layer rather than relying on a
+  /// case insensitive collation, so lookups behave identically everywhere and
+  /// the index stays a plain B-tree.
+  emailNormalized String
+  mobile          String
+  /// E.164, for example +27821234567.
+  mobileNormalized String
+  isExistingPatient Boolean @default(false)
+  /// Operational notes. Never returned by a public endpoint.
+  internalNotes String?
+  createdAt     DateTime @db.Timestamptz(3) @default(now())
+  updatedAt     DateTime @db.Timestamptz(3) @updatedAt
+
+  appointments Appointment[]
+  orders       Order[]
+
+  // No unique constraint on email or mobile: families legitimately share a
+  // contact number, and a wrongly merged patient history is far worse than a
+  // duplicate row. De-duplication is handled in the service layer instead.
+  @@index([emailNormalized])
+  @@index([mobileNormalized])
+  @@index([lastName, firstName])
+}
+
+model Dentist {
+  id        String  @id @default(cuid())
+  slug      String  @unique
+  title     String  @default("Dr")
+  firstName String
+  lastName  String
+  role      String
+  /// Short biography shown on the team page.
+  bio String
+  /// Areas of clinical interest, stored as a newline separated list.
+  focusAreas String
+  photoUrl   String
+  /// Lower values are offered first when load is equal. See the tie-break rule
+  /// in lib/availability/compute.ts.
+  sortOrder Int      @default(100)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @db.Timestamptz(3) @default(now())
+  updatedAt DateTime @db.Timestamptz(3) @updatedAt
+
+  schedules    DentistSchedule[]
+  appointments Appointment[]
+  blockedTimes BlockedTime[]
+  services     ServiceDentist[]
+
+  @@index([isActive, sortOrder])
+}
+
+// ---------------------------------------------------------------------------
+// Catalogue
+// ---------------------------------------------------------------------------
+
+model Service {
+  id               String @id @default(cuid())
+  slug             String @unique
+  name             String
+  category         String
+  shortDescription String
+  /// Chair time in minutes.
+  durationMinutes Int
+  /// Turnaround appended after the appointment. Held in the diary but not shown
+  /// to the patient as part of their appointment length.
+  bufferAfterMinutes Int @default(0)
+  /// Indicative price in cents. Null means the fee follows an assessment.
+  priceFromCents   Int?
+  isBookableOnline Boolean @default(true)
+  isEmergency      Boolean @default(false)
+  /// Deposit policy, snapshotted onto the appointment at booking time so that a
+  /// later fee change cannot alter an existing booking's obligation.
+  depositType        String @default("none")
+  depositAmountCents Int?
+  /// Whether aftercare products may be suggested alongside this service.
+  allowsUpsell Boolean  @default(true)
+  sortOrder    Int      @default(100)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @db.Timestamptz(3) @default(now())
+  updatedAt    DateTime @db.Timestamptz(3) @updatedAt
+
+  eligibleDentists ServiceDentist[]
+  relatedProducts  ServiceProduct[]
+  appointments     Appointment[]
+
+  @@index([isActive, category, sortOrder])
+  @@index([isBookableOnline, isActive])
+}
+
+/// Which dentists may perform which service.
+model ServiceDentist {
+  serviceId String
+  dentistId String
+  /// Optional per dentist duration override.
+  durationMinutesOverride Int?
+
+  service Service @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  dentist Dentist @relation(fields: [dentistId], references: [id], onDelete: Cascade)
+
+  @@id([serviceId, dentistId])
+  // The compound primary key covers service to dentist. This index covers the
+  // reverse direction, "what can this dentist do".
+  @@index([dentistId])
+}
+
+/// Aftercare products related to a service. Drives contextual recommendations
+/// from data rather than from hard coded logic in each page.
+model ServiceProduct {
+  serviceId String
+  productId String
+  sortOrder Int    @default(100)
+
+  service Service @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@id([serviceId, productId])
+  @@index([productId])
+}
+
+// ---------------------------------------------------------------------------
+// Recurring time rules
+//
+// dayOfWeek is 0 for Sunday through 6 for Saturday, matching Date#getDay.
+// All minute fields are local minutes from midnight: 480 is 08:00.
+// ---------------------------------------------------------------------------
+
+/// Exactly seven rows, one per weekday. Sunday is stored with isClosed true
+/// rather than omitted, so the clinic week is always fully described.
+model ClinicHours {
+  id           String   @id @default(cuid())
+  dayOfWeek    Int      @unique
+  isClosed     Boolean  @default(false)
+  openMinutes  Int
+  closeMinutes Int
+  updatedAt    DateTime @db.Timestamptz(3) @updatedAt
+}
+
+/// One dentist's recurring working window for one weekday, plus an optional
+/// break. Multiple rows per dentist per day are allowed for split shifts.
+model DentistSchedule {
+  id           String @id @default(cuid())
+  dentistId    String
+  dayOfWeek    Int
+  startMinutes Int
+  endMinutes   Int
+  /// Lunch. Either both set or both null.
+  breakStartMinutes Int?
+  breakEndMinutes   Int?
+  isActive          Boolean  @default(true)
+  createdAt         DateTime @db.Timestamptz(3) @default(now())
+  updatedAt         DateTime @db.Timestamptz(3) @updatedAt
+
+  dentist Dentist @relation(fields: [dentistId], references: [id], onDelete: Cascade)
+
+  @@index([dentistId, dayOfWeek, isActive])
+  @@index([dayOfWeek, isActive])
+}
+
+// ---------------------------------------------------------------------------
+// Concrete occurrences
+// ---------------------------------------------------------------------------
+
+/// Leave, training, public holidays and equipment maintenance.
+/// A null dentistId means the block applies to the whole clinic.
+model BlockedTime {
+  id        String   @id @default(cuid())
+  dentistId String?
+  startTime DateTime @db.Timestamptz(3)
+  /// Exclusive end, matching the half-open interval convention used throughout.
+  endTime   DateTime @db.Timestamptz(3)
+  reason    String
+  note      String?
+  createdAt DateTime @db.Timestamptz(3) @default(now())
+  updatedAt DateTime @db.Timestamptz(3) @updatedAt
+
+  dentist Dentist? @relation(fields: [dentistId], references: [id], onDelete: Cascade)
+
+  @@index([dentistId, startTime])
+  @@index([startTime])
+  // Load bearing. A two week leave block that began before the requested window
+  // has startTime before the window start, so a scan driven only by startTime
+  // would miss it entirely. Overlap queries must test endTime as well.
+  @@index([endTime])
+}
+
+model Appointment {
+  id String @id @default(cuid())
+  /// Human readable and unambiguous when read out over the telephone.
+  reference String @unique
+  patientId String
+  dentistId String
+  serviceId String
+  startTime DateTime @db.Timestamptz(3)
+  /// Exclusive end including the turnaround buffer. This is the interval that
+  /// occupies the diary.
+  endTime DateTime @db.Timestamptz(3)
+  /// Chair end without the buffer. Denormalised so the UI never recomputes it.
+  serviceEndTime DateTime @db.Timestamptz(3)
+  status         String   @default("pending")
+  /// Deposit snapshot taken from the service at creation.
+  depositType        String  @default("none")
+  depositAmountCents Int?
+  depositStatus      String  @default("not_required")
+  /// The patient's own note about their visit.
+  notes String?
+  /// Staff only.
+  internalNotes String?
+  source        String  @default("web")
+  isEmergency   Boolean @default(false)
+  cancelledAt   DateTime? @db.Timestamptz(3)
+  cancelledBy   String?
+  cancelReason  String?
+  createdAt     DateTime @db.Timestamptz(3) @default(now())
+  updatedAt     DateTime @db.Timestamptz(3) @updatedAt
+
+  patient  Patient            @relation(fields: [patientId], references: [id], onDelete: Restrict)
+  dentist  Dentist            @relation(fields: [dentistId], references: [id], onDelete: Restrict)
+  service  Service            @relation(fields: [serviceId], references: [id], onDelete: Restrict)
+  payments Payment[]
+  events   AppointmentEvent[]
+  orders   Order[]
+
+  // The hot path is the overlap probe, run once when listing slots and again
+  // inside the booking transaction:
+  //   WHERE dentistId = ? AND status IN (...) AND startTime < :end AND endTime > :start
+  @@index([dentistId, status, startTime])
+  @@index([dentistId, startTime])
+  @@index([startTime])
+  @@index([status, startTime])
+  @@index([patientId, startTime])
+  @@index([serviceId, startTime])
+  @@index([endTime])
+}
+
+/// Append only audit trail. A cancellation, reschedule or no-show must always
+/// be explainable after the fact.
+model AppointmentEvent {
+  id            String @id @default(cuid())
+  appointmentId String
+  type          String
+  /// "patient", "admin" or "system".
+  actor String
+  /// JSON encoded detail. SQLite has no Json column type and nothing queries
+  /// inside this field, so a String is sufficient and portable.
+  payloadJson String?
+  createdAt   DateTime @db.Timestamptz(3) @default(now())
+
+  appointment Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+
+  @@index([appointmentId, createdAt])
+  @@index([type, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Commerce
+// ---------------------------------------------------------------------------
+
+model Product {
+  id               String @id @default(cuid())
+  slug             String @unique
+  name             String
+  category         String
+  shortDescription String
+  description      String
+  /// What is in the box, stored as a newline separated list.
+  includes   String?
+  /// Usage summary, kept factual and free of medical claims.
+  usageNotes String?
+  priceCents Int
+  imageUrl   String
+  isActive   Boolean  @default(true)
+  sortOrder  Int      @default(100)
+  createdAt  DateTime @db.Timestamptz(3) @default(now())
+  updatedAt  DateTime @db.Timestamptz(3) @updatedAt
+
+  orderItems      OrderItem[]
+  relatedServices ServiceProduct[]
+
+  @@index([isActive, category, sortOrder])
+}
+
+model Order {
+  id        String  @id @default(cuid())
+  reference String  @unique
+  patientId String?
+  /// Contact snapshot, because an order may be placed without a patient record.
+  contactName            String
+  contactEmail           String
+  contactEmailNormalized String
+  contactMobile          String
+  status                 String @default("pending")
+  fulfilment             String @default("collect")
+  /// Set when the order is to be collected at an existing appointment.
+  appointmentId   String?
+  subtotalCents   Int
+  totalCents      Int
+  notes           String?
+  createdAt       DateTime @db.Timestamptz(3) @default(now())
+  updatedAt       DateTime @db.Timestamptz(3) @updatedAt
+
+  patient     Patient?     @relation(fields: [patientId], references: [id], onDelete: SetNull)
+  appointment Appointment? @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+  items       OrderItem[]
+  payments    Payment[]
+
+  @@index([status, createdAt])
+  @@index([contactEmailNormalized])
+  @@index([patientId, createdAt])
+}
+
+model OrderItem {
+  id        String @id @default(cuid())
+  orderId   String
+  productId String
+  quantity  Int
+  /// Snapshots, so that editing the catalogue never rewrites a placed order.
+  nameSnapshot   String
+  unitPriceCents Int
+  lineTotalCents Int
+
+  order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@index([orderId])
+  @@index([productId])
+}
+
+/// One ledger for both appointment deposits and product orders. Exactly one of
+/// appointmentId and orderId is set, enforced in the service layer here and by a
+/// CHECK constraint once on PostgreSQL.
+///
+/// No card data is ever written to this table. The provider reference points at
+/// a record held by the payment provider.
+model Payment {
+  id            String  @id @default(cuid())
+  appointmentId String?
+  orderId       String?
+  kind          String
+  provider      String  @default("manual")
+  providerReference String?
+  amountCents       Int
+  status            String @default("pending")
+  /// Raw provider payload, for reconciliation only.
+  rawPayloadJson String?
+  paidAt         DateTime? @db.Timestamptz(3)
+  refundedAt     DateTime? @db.Timestamptz(3)
+  createdAt      DateTime @db.Timestamptz(3) @default(now())
+  updatedAt      DateTime @db.Timestamptz(3) @updatedAt
+
+  appointment Appointment? @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  order       Order?       @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  /// Makes a replayed provider webhook a no-op rather than a double credit.
+  @@unique([provider, providerReference])
+  @@index([appointmentId])
+  @@index([orderId])
+  @@index([status, createdAt])
+}
+
+/// Clinic wide booking policy, so lead time and booking horizon can change
+/// without a deployment.
+model ClinicSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @db.Timestamptz(3) @updatedAt
+}

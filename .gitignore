@@ -1,0 +1,27 @@
+# ---------------------------------------------------------------------------
+# Repository root
+#
+# The application has its own .gitignore in dental-clinic-website/, which
+# covers node_modules, build output, the generated Prisma client and .env
+# files. This one only covers things that live at the root.
+# ---------------------------------------------------------------------------
+
+# Skill mirrors written by `prisma init` for other editors. The skills
+# themselves are committed under .claude/skills/, so these are duplicates.
+.agents/
+.windsurf/
+
+# Vercel CLI link and pulled environment
+.vercel/
+
+# OS and editor noise
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+.idea/
+.vscode/*
+!.vscode/settings.json
+
+# Local Claude Code state, which is per machine rather than per project
+.claude/settings.local.json

@@ -1,0 +1,307 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+/* ==========================================================================
+   Harbour Dental Studio design tokens
+
+   White for cleanliness and space, near black for contrast and weight, and a
+   single blue reserved for action, state and focus. Blue is never a decorative
+   fill: if something is blue on this site it is either interactive, active, or
+   telling you about availability.
+   ========================================================================== */
+
+@theme {
+  /* ---- Palette ---------------------------------------------------------- */
+  --color-white: #ffffff;
+  --color-canvas: #f7f9fc;
+  --color-canvas-deep: #eef2f8;
+  --color-ink: #0a0b0d;
+  --color-charcoal: #15181d;
+  --color-charcoal-soft: #1d2127;
+
+  --color-blue: #145cff;
+  --color-blue-deep: #073d9e;
+  --color-blue-dark: #052a6e;
+  --color-blue-soft: #eaf1ff;
+  --color-blue-tint: #f5f8ff;
+
+  /* Two greys, because one is not enough to pass AA everywhere.
+     --color-grey is 4.6:1 on white, fine for body copy.
+     --color-grey-strong is 7.5:1, used for small labels and metadata. */
+  --color-grey: #667085;
+  --color-grey-strong: #475467;
+  --color-grey-light: #98a2b3;
+
+  --color-line: #e4e9f2;
+  --color-line-strong: #d0d8e6;
+  --color-line-dark: rgb(255 255 255 / 0.14);
+  --color-line-dark-strong: rgb(255 255 255 / 0.22);
+
+  /* Availability and status. Each is always paired with an icon or text in the
+     markup, never used as the only signal. */
+  --color-positive: #067647;
+  --color-positive-soft: #ecfdf3;
+  --color-caution: #b54708;
+  --color-caution-soft: #fffaeb;
+  --color-critical: #b42318;
+  --color-critical-soft: #fef3f2;
+
+  /* ---- Typography ------------------------------------------------------- */
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system,
+    'Segoe UI', Roboto, sans-serif;
+  --font-display: var(--font-instrument-serif), Georgia, 'Times New Roman',
+    serif;
+
+  /* ---- Radius ----------------------------------------------------------
+     Only two values, deliberately. A page with five different corner radii
+     reads as assembled rather than designed. */
+  --radius-panel: 4px;
+  --radius-card: 10px;
+
+  /* ---- Motion ----------------------------------------------------------
+     Two durations, split by purpose.
+
+     --duration-feedback is for anything responding to a pointer or key: hover,
+     press, focus, toggle. Capped at 200ms because interaction feedback that
+     takes longer than that feels like lag rather than polish.
+
+     --duration-reveal is for one-shot entrances only. 300ms reads as composed
+     at the scale of a section heading sliding into place. */
+  --duration-feedback: 160ms;
+  --duration-reveal: 300ms;
+  --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* ---- Z-index scale --------------------------------------------------
+     A fixed ladder, so no component ever invents its own stacking value. */
+  --z-raised: 10;
+  --z-sticky: 20;
+  --z-nav: 30;
+  --z-mobilebar: 40;
+  --z-overlay: 50;
+  --z-modal: 60;
+  --z-toast: 70;
+
+  /* ---- Container -------------------------------------------------------- */
+  --spacing-gutter: 1.25rem;
+}
+
+/* ==========================================================================
+   Base
+   ========================================================================== */
+
+@layer base {
+  :root {
+    /* Base UI portals their overlays to the end of the body. Without an
+       isolated stacking context on the root, a page element with a high
+       z-index can paint over a dialog. */
+    isolation: isolate;
+    color-scheme: light;
+    scroll-behavior: smooth;
+    /* Sticky offset so an anchor target does not land under the navigation. */
+    scroll-padding-top: 6rem;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    :root {
+      scroll-behavior: auto;
+    }
+  }
+
+  body {
+    /* Required for correct backdrop positioning in iOS 26 Safari. */
+    position: relative;
+    background-color: var(--color-white);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    font-synthesis-weight: none;
+  }
+
+  /* A single visible focus treatment everywhere, so keyboard users are never
+     guessing where they are. Never removed without a replacement. */
+  :focus-visible {
+    outline: 2px solid var(--color-blue);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  /* Pointer users do not get the ring, keyboard users always do. */
+  :focus:not(:focus-visible) {
+    outline: none;
+  }
+
+  ::selection {
+    background-color: var(--color-blue);
+    color: var(--color-white);
+  }
+
+  /* Headings default to balanced wrapping, body copy to pretty wrapping. */
+  h1,
+  h2,
+  h3,
+  h4 {
+    text-wrap: balance;
+  }
+
+  p,
+  li {
+    text-wrap: pretty;
+  }
+
+  /* Any number the reader may compare against another number lines up. */
+  time,
+  data,
+  .numeric {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Base UI sets this attribute while a dialog holds the page. */
+  body[data-scroll-locked] {
+    overflow: hidden;
+  }
+}
+
+/* ==========================================================================
+   Glass surfaces
+
+   Three variants and no more, so glass stays a deliberate accent rather than
+   the default texture of the site. Flat white and flat near black sections sit
+   between them to carry the contrast.
+
+   Note what is NOT animated here: backdrop-filter is set once and never
+   transitioned. Animating a blur across a large surface forces the compositor
+   to re-filter every frame, which is the single most expensive thing a page
+   like this can do. Where a glass surface needs to change state, only
+   background-color, border-color and box-shadow move.
+   ========================================================================== */
+
+@utility glass-light {
+  background-color: rgb(255 255 255 / 0.72);
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  border: 1px solid rgb(255 255 255 / 0.6);
+  box-shadow:
+    0 1px 0 0 rgb(255 255 255 / 0.7) inset,
+    0 1px 2px rgb(10 11 13 / 0.04),
+    0 12px 32px -8px rgb(10 11 13 / 0.1);
+}
+
+@utility glass-dark {
+  background-color: rgb(10 11 13 / 0.7);
+  backdrop-filter: blur(18px) saturate(130%);
+  -webkit-backdrop-filter: blur(18px) saturate(130%);
+  border: 1px solid rgb(255 255 255 / 0.14);
+  box-shadow:
+    0 1px 0 0 rgb(255 255 255 / 0.08) inset,
+    0 16px 40px -12px rgb(0 0 0 / 0.5);
+}
+
+/* Reserved for the deposit panel at the end of the booking flow, where a
+   slightly cooler surface separates payment from the rest of the journey. */
+@utility glass-blue {
+  background-color: rgb(5 20 48 / 0.74);
+  backdrop-filter: blur(18px) saturate(130%);
+  -webkit-backdrop-filter: blur(18px) saturate(130%);
+  border: 1px solid rgb(20 92 255 / 0.28);
+  box-shadow:
+    0 1px 0 0 rgb(255 255 255 / 0.08) inset,
+    0 16px 40px -12px rgb(5 20 48 / 0.55);
+}
+
+/* ==========================================================================
+   Layout helpers
+   ========================================================================== */
+
+@utility container-page {
+  width: 100%;
+  max-width: 80rem;
+  margin-inline: auto;
+  padding-inline: var(--spacing-gutter);
+}
+
+@utility container-prose {
+  width: 100%;
+  max-width: 44rem;
+  margin-inline: auto;
+  padding-inline: var(--spacing-gutter);
+}
+
+/* Fixed elements must clear the home indicator on a notched phone. */
+@utility safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+@utility safe-bottom-offset {
+  margin-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* ==========================================================================
+   Typography helpers
+
+   Optical tracking for the display serif is defined once, here, rather than
+   sprinkled through components as tracking-* utilities.
+   ========================================================================== */
+
+@utility font-display {
+  font-family: var(--font-display);
+  font-weight: 400;
+  letter-spacing: -0.015em;
+  line-height: 1.08;
+}
+
+@utility text-eyebrow {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-grey-strong);
+}
+
+/* ==========================================================================
+   Section reveal
+
+   One mechanism for the whole site: an IntersectionObserver adds data-revealed
+   once, then stops observing. No scroll listeners, no continuous work, and
+   only transform and opacity move.
+   ========================================================================== */
+
+@layer utilities {
+  [data-reveal] {
+    opacity: 0;
+    transform: translateY(12px);
+    transition:
+      opacity var(--duration-reveal) var(--ease-out-soft),
+      transform var(--duration-reveal) var(--ease-out-soft);
+  }
+
+  [data-reveal][data-revealed='true'] {
+    opacity: 1;
+    transform: none;
+  }
+
+  /* Anyone who has asked for less motion gets the content, immediately, with
+     no transition at all. */
+  @media (prefers-reduced-motion: reduce) {
+    [data-reveal] {
+      opacity: 1;
+      transform: none;
+      transition: none;
+    }
+
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+/* Wide content scrolls inside its own container so the page body never does. */
+@utility scroll-x {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+}

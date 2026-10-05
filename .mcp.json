@@ -1,0 +1,35 @@
+{
+  "mcpServers": {
+    "context7": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@upstash/context7-mcp@latest"
+      ],
+      "env": {}
+    },
+    "playwright": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@playwright/mcp@latest"
+      ],
+      "env": {}
+    },
+    "chrome-devtools": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "chrome-devtools-mcp@latest"
+      ],
+      "env": {}
+    },
+    "figma-dev-mode-mcp-server": {
+      "type": "sse",
+      "url": "http://127.0.0.1:3845/sse"
+    }
+  }
+}

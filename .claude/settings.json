@@ -1,0 +1,24 @@
+{
+  "enabledPlugins": {
+    "frontend-design@claude-code-plugins": true,
+    "ui-ux-pro-max@ui-ux-pro-max-skill": true
+  },
+  "extraKnownMarketplaces": {
+    "claude-code-plugins": {
+      "source": {
+        "source": "github",
+        "repo": "anthropics/claude-code",
+        "sparsePaths": [
+          ".claude-plugin",
+          "plugins"
+        ]
+      }
+    },
+    "ui-ux-pro-max-skill": {
+      "source": {
+        "source": "github",
+        "repo": "nextlevelbuilder/ui-ux-pro-max-skill"
+      }
+    }
+  }
+}
