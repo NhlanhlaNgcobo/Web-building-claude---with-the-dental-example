@@ -1,0 +1,375 @@
+// The Apple Bros: catalogue, stock and orders.
+//
+// Running on PostgreSQL. Conventions carried over from the sibling project in
+// this repository, for the same reasons:
+//
+//   - Statuses and grades are String columns backed by TypeScript unions and
+//     Zod schemas in lib/domain/enums.ts, so adding one is a code change
+//     rather than a migration, and the types never fork.
+//   - Money is Int cents. No Decimal, no float, no rounding questions.
+//   - Every DateTime is Timestamptz, so an instant is never reinterpreted.
+//   - No array columns. Relationships are explicit join tables or child rows.
+//
+// The integrity story here is stock. A variant quantity must never go
+// negative, because that means a device was sold twice. That is enforced in
+// three places: the catalogue only offers what is in stock, the order
+// transaction decrements conditionally, and a CHECK constraint in migration
+// 20261006120100 makes a negative quantity impossible at the database level.
+// See README.md.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------
+// Catalogue
+// ---------------------------------------------------------------------------
+
+model Category {
+  id          String  @id @default(cuid())
+  slug        String  @unique
+  /// One of the ProductFamily values. Drives navigation and filtering.
+  family      String
+  name        String
+  /// One line, shown under the category heading.
+  tagline     String
+  description String
+  imageUrl    String?
+  sortOrder   Int      @default(100)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @db.Timestamptz(3) @default(now())
+  updatedAt   DateTime @db.Timestamptz(3) @updatedAt
+
+  products Product[]
+
+  @@index([isActive, sortOrder])
+  @@index([family])
+}
+
+/// A model, such as "iPhone 15 Pro". What a customer browses.
+/// What they actually buy is a Variant.
+model Product {
+  id         String @id @default(cuid())
+  slug       String @unique
+  categoryId String
+  name       String
+  /// Short selling line, one sentence.
+  tagline    String
+  description String
+  /// Bullet points, newline separated.
+  highlights String
+  /// Technical specifications as JSON, rendered as a table. Nothing queries
+  /// inside it, so a String keeps it simple and portable.
+  specsJson  String?
+  /// Year the model was released, used for sorting and for honest labelling
+  /// of older stock.
+  releaseYear Int
+  /// Shown on the card and used for sorting "most wanted" without inventing
+  /// a popularity metric we cannot substantiate.
+  isFeatured Boolean  @default(false)
+  isActive   Boolean  @default(true)
+  sortOrder  Int      @default(100)
+  createdAt  DateTime @db.Timestamptz(3) @default(now())
+  updatedAt  DateTime @db.Timestamptz(3) @updatedAt
+
+  category Category       @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  images   ProductImage[]
+  variants Variant[]
+
+  @@index([isActive, categoryId, sortOrder])
+  @@index([isActive, isFeatured])
+  @@index([releaseYear])
+}
+
+model ProductImage {
+  id        String  @id @default(cuid())
+  productId String
+  url       String
+  /// Required. An image with no alt text is a bug, not a style choice.
+  alt       String
+  /// Set when the image shows a specific colour, so selecting a colour can
+  /// change the photograph.
+  colourName String?
+  sortOrder  Int     @default(100)
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId, sortOrder])
+}
+
+/// What is actually bought and held in stock: one model, in one storage size,
+/// in one colour, at one condition grade.
+model Variant {
+  id        String @id @default(cuid())
+  productId String
+  /// Human readable and unique, printed on the shelf label.
+  sku       String @unique
+
+  /// Null for products with no storage option, such as a charging cable.
+  storageGb  Int?
+  colourName String
+  /// For the colour swatch. Hex including the leading hash.
+  colourHex  String
+  /// One of the Condition values.
+  condition  String
+
+  priceCents Int
+  /// What it would cost new, used to show a saving. Only set where that
+  /// comparison is genuine; never set to manufacture a discount.
+  compareAtCents Int?
+
+  /// Units on hand. A CHECK constraint prevents this going below zero.
+  stockQuantity Int @default(0)
+
+  /// Guaranteed minimum for a used device, such as 85. Null for new stock,
+  /// where the battery is whatever the manufacturer shipped. This is a
+  /// promise, so the grading definitions in data/conditions.ts must match.
+  batteryHealthMin Int?
+  /// Months of cover we provide, which is our own warranty rather than the
+  /// manufacturer's.
+  warrantyMonths Int @default(12)
+  /// Free text for anything specific to this unit batch, such as
+  /// "faint mark on the top edge".
+  conditionNote String?
+
+  isActive  Boolean  @default(true)
+  createdAt DateTime @db.Timestamptz(3) @default(now())
+  updatedAt DateTime @db.Timestamptz(3) @updatedAt
+
+  product    Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+  orderItems OrderItem[]
+  movements  StockMovement[]
+
+  // One row per model, storage, colour and grade. Two rows for the same
+  // combination would split the stock count and let both be sold.
+  @@unique([productId, storageGb, colourName, condition])
+  // The hot query: in-stock variants for a product, cheapest first.
+  @@index([productId, isActive, priceCents])
+  @@index([isActive, stockQuantity])
+  @@index([condition])
+}
+
+/// Append-only stock ledger.
+///
+/// Every change to stockQuantity writes one of these, so the quantity is
+/// always explainable from its history rather than being a number somebody
+/// edited at some point.
+model StockMovement {
+  id        String @id @default(cuid())
+  variantId String
+  /// Negative for a sale, positive for intake or a return.
+  delta     Int
+  /// Quantity after this movement, so the ledger can be audited without
+  /// replaying every row.
+  resulting Int
+  /// One of the StockReason values.
+  reason    String
+  orderId   String?
+  note      String?
+  createdAt DateTime @db.Timestamptz(3) @default(now())
+
+  variant Variant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  order   Order?  @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  @@index([variantId, createdAt])
+  @@index([orderId])
+  @@index([reason, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Orders
+// ---------------------------------------------------------------------------
+
+model Order {
+  id        String @id @default(cuid())
+  /// Human readable and unambiguous read over the telephone.
+  reference String @unique
+  status    String @default("pending_payment")
+
+  /// Contact snapshot. There are no customer accounts, so an order carries
+  /// everything needed to fulfil and to get in touch about it.
+  customerName   String
+  customerEmail  String
+  /// lower(trim(email)), so lookup behaves identically everywhere.
+  customerEmailNormalized String
+  customerMobile String
+
+  fulfilment String @default("collect")
+  /// Delivery address, null for collection.
+  addressLine1 String?
+  addressLine2 String?
+  addressSuburb String?
+  addressCity   String?
+  addressProvince String?
+  addressPostalCode String?
+
+  paymentMethod String @default("eft")
+
+  subtotalCents Int
+  shippingCents Int @default(0)
+  /// Trade in applied against this order, as a positive amount that was
+  /// subtracted. Stored so the arithmetic on the invoice is reconstructable.
+  tradeInCents  Int @default(0)
+  totalCents    Int
+
+  customerNote String?
+  /// Staff only, never returned by a public endpoint.
+  internalNote String?
+
+  placedAt    DateTime  @db.Timestamptz(3) @default(now())
+  paidAt      DateTime? @db.Timestamptz(3)
+  cancelledAt DateTime? @db.Timestamptz(3)
+  cancelReason String?
+  createdAt   DateTime  @db.Timestamptz(3) @default(now())
+  updatedAt   DateTime  @db.Timestamptz(3) @updatedAt
+
+  items     OrderItem[]
+  payments  Payment[]
+  movements StockMovement[]
+  tradeIn   TradeInQuote?
+
+  @@index([status, placedAt])
+  @@index([customerEmailNormalized])
+  @@index([placedAt])
+}
+
+model OrderItem {
+  id        String @id @default(cuid())
+  orderId   String
+  variantId String
+  quantity  Int
+
+  /// Snapshots. Editing the catalogue must never rewrite a placed order, and
+  /// a variant can be deactivated or re-priced after the fact.
+  skuSnapshot        String
+  nameSnapshot       String
+  variantSnapshot    String
+  conditionSnapshot  String
+  imageSnapshot      String?
+  unitPriceCents     Int
+  lineTotalCents     Int
+  warrantyMonths     Int
+
+  order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  variant Variant @relation(fields: [variantId], references: [id], onDelete: Restrict)
+
+  @@index([orderId])
+  @@index([variantId])
+}
+
+/// Payment ledger. No card data is ever written here; the provider reference
+/// points at a record held by the payment provider.
+model Payment {
+  id      String @id @default(cuid())
+  orderId String
+  method  String
+  provider String @default("manual")
+  providerReference String?
+  amountCents Int
+  status  String @default("pending")
+  /// Raw provider payload, for reconciliation only.
+  rawPayloadJson String?
+  paidAt     DateTime? @db.Timestamptz(3)
+  refundedAt DateTime? @db.Timestamptz(3)
+  createdAt  DateTime  @db.Timestamptz(3) @default(now())
+  updatedAt  DateTime  @db.Timestamptz(3) @updatedAt
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  /// Makes a replayed provider webhook a no-op rather than a double credit.
+  @@unique([provider, providerReference])
+  @@index([orderId])
+  @@index([status, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Trade in
+// ---------------------------------------------------------------------------
+
+/// What a customer is offered for their old device.
+///
+/// The quote is explicitly provisional: it is calculated from what the
+/// customer tells us, and confirmed on inspection. Saying so clearly is both
+/// honest and the only way the number can be revised without an argument.
+model TradeInQuote {
+  id        String @id @default(cuid())
+  reference String @unique
+  status    String @default("quoted")
+
+  /// What they told us.
+  deviceModelId String
+  deviceLabel   String
+  storageGb     Int?
+  /// One of the TradeInCondition values.
+  condition     String
+  isUnlocked    Boolean @default(true)
+  powersOn      Boolean @default(true)
+  batteryHealth Int?
+
+  /// What the published rules produced from those answers.
+  quotedCents Int
+  /// What it became after inspection, if different.
+  revisedCents Int?
+  revisionNote String?
+
+  /// How long the quote stands. A trade in value that never expires is a
+  /// promise about a market that moves.
+  expiresAt DateTime @db.Timestamptz(3)
+
+  customerName   String
+  customerEmail  String
+  customerEmailNormalized String
+  customerMobile String
+
+  /// Set when the trade in was applied against a purchase.
+  orderId String? @unique
+
+  createdAt DateTime @db.Timestamptz(3) @default(now())
+  updatedAt DateTime @db.Timestamptz(3) @updatedAt
+
+  order Order? @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt])
+  @@index([customerEmailNormalized])
+}
+
+/// The published trade in price list.
+///
+/// Values live in the database rather than in code so the shop can move them
+/// as the market moves, without a deployment.
+model TradeInModel {
+  id        String @id @default(cuid())
+  slug      String @unique
+  family    String
+  label     String
+  /// Storage sizes this model shipped in, newline separated. Empty where
+  /// storage does not affect the value.
+  storageOptions String
+  /// The most we pay for this model, for a flawless unlocked unit at the
+  /// largest storage size. Every other outcome is a deduction from this.
+  baseValueCents Int
+  releaseYear Int
+  isActive  Boolean  @default(true)
+  sortOrder Int      @default(100)
+  createdAt DateTime @db.Timestamptz(3) @default(now())
+  updatedAt DateTime @db.Timestamptz(3) @updatedAt
+
+  @@index([isActive, family, sortOrder])
+}
+
+// ---------------------------------------------------------------------------
+// Store configuration
+// ---------------------------------------------------------------------------
+
+/// Single row key and value store, so shipping thresholds and similar can
+/// change without a deployment.
+model StoreSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @db.Timestamptz(3) @updatedAt
+}

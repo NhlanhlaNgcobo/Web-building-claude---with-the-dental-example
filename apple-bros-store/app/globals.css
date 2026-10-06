@@ -1,0 +1,340 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+/* ==========================================================================
+   The Apple Bros design tokens
+
+   White is the primary. The site is a white canvas with generous space, and
+   that is what makes the product photography carry it: a cut-out handset on
+   white reads as premium, the same handset on a tinted panel reads as a
+   catalogue page.
+
+   Red is drawn from the logo and is an accent, not a surface. It appears on
+   the mark, on the primary action, on active state and on the focus ring,
+   and nowhere else. A red band across a section would fight the products.
+
+   Near-black carries type and the occasional full-bleed section, used
+   sparingly for contrast rather than as a second theme.
+
+   The leaf green is a signal rather than a colour: it means verified, in
+   stock, or covered by warranty. Holding it to that makes stock state
+   readable at a glance.
+
+   Deliberately not Apple's own palette or type. This is an independent
+   reseller; looking like the manufacturer would be misleading as well as
+   derivative.
+   ========================================================================== */
+
+@theme {
+  /* ---- Core ------------------------------------------------------------- */
+  --color-white: #ffffff;
+  --color-paper: #fafafa;
+  --color-canvas: #f4f4f5;
+  --color-canvas-deep: #e9e9ec;
+
+  /* The wordmark black, which is cool rather than neutral. */
+  --color-ink: #0d1117;
+  --color-graphite: #161b22;
+  --color-graphite-soft: #1f252e;
+
+  /* ---- Brand red -------------------------------------------------------- */
+  --color-red: #e11d2e;
+  --color-red-deep: #b01222;
+  --color-red-dark: #7f0d19;
+  --color-red-soft: #fef2f3;
+  --color-red-tint: #fff7f8;
+
+  /* ---- Leaf green, reserved for stock and cover signals ----------------- */
+  --color-leaf: #2f8f23;
+  --color-leaf-deep: #236c1b;
+  --color-leaf-soft: #eff8ed;
+
+  /* Two greys, because one cannot pass AA for both body copy and small
+     labels. --color-grey is 4.6:1 on white, --color-grey-strong is 7.4:1. */
+  --color-grey: #64696f;
+  --color-grey-strong: #42474d;
+  --color-grey-light: #9aa0a6;
+
+  --color-line: #e4e4e7;
+  --color-line-strong: #d1d1d6;
+  --color-line-dark: rgb(255 255 255 / 0.12);
+  --color-line-dark-strong: rgb(255 255 255 / 0.2);
+
+  /* ---- Status ----------------------------------------------------------
+     Each is always paired with an icon or with text, never used alone. */
+  --color-positive: #2f8f23;
+  --color-positive-soft: #eff8ed;
+  --color-caution: #b45309;
+  --color-caution-soft: #fffbeb;
+  --color-critical: #be123c;
+  --color-critical-soft: #fff1f3;
+
+  /* ---- Typography ------------------------------------------------------
+     One family across the site, which keeps it cohesive and the font payload
+     small. Mono is for technical data only: storage sizes, battery health,
+     SKUs, IMEI. Specifications set in mono read as specifications. */
+  --font-sans: var(--font-jakarta), ui-sans-serif, system-ui, -apple-system,
+    'Segoe UI', Roboto, sans-serif;
+  --font-mono: var(--font-mono-spec), ui-monospace, 'SF Mono', Menlo, monospace;
+
+  /* ---- Radius ----------------------------------------------------------
+     Two values only. Product cards want a softer corner than the dental work
+     because the photography is cut out rather than full bleed. */
+  --radius-panel: 6px;
+  --radius-card: 14px;
+
+  /* ---- Motion ----------------------------------------------------------
+     Split by purpose. Interaction feedback is capped at 200ms, because
+     anything slower reads as lag rather than polish. One-shot entrances get
+     300ms, which is composed at the scale of a section. */
+  --duration-feedback: 160ms;
+  --duration-reveal: 300ms;
+  --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* ---- Z-index ladder --------------------------------------------------
+     Fixed scale. No component invents its own stacking value. */
+  --z-raised: 10;
+  --z-sticky: 20;
+  --z-nav: 30;
+  --z-mobilebar: 40;
+  --z-overlay: 50;
+  --z-modal: 60;
+  --z-toast: 70;
+
+  --spacing-gutter: 1.25rem;
+}
+
+/* ==========================================================================
+   Base
+   ========================================================================== */
+
+@layer base {
+  :root {
+    /* Base UI portals overlays to the end of body. Without an isolated
+       stacking context here, a high z-index element can paint over a dialog. */
+    isolation: isolate;
+    color-scheme: light;
+    scroll-behavior: smooth;
+    scroll-padding-top: 6rem;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    :root {
+      scroll-behavior: auto;
+    }
+  }
+
+  body {
+    /* Required for correct backdrop positioning in iOS 26 Safari. */
+    position: relative;
+    background-color: var(--color-white);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    font-synthesis-weight: none;
+  }
+
+  /* One visible focus treatment everywhere. Never removed without a
+     replacement. */
+  :focus-visible {
+    outline: 2px solid var(--color-red);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  :focus:not(:focus-visible) {
+    outline: none;
+  }
+
+  ::selection {
+    background-color: var(--color-red);
+    color: var(--color-white);
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    text-wrap: balance;
+  }
+
+  p,
+  li {
+    text-wrap: pretty;
+  }
+
+  /* Anything a shopper compares against another number lines up: prices,
+     storage sizes, battery percentages, stock counts. */
+  time,
+  data,
+  .numeric {
+    font-variant-numeric: tabular-nums;
+  }
+
+  body[data-scroll-locked] {
+    overflow: hidden;
+  }
+}
+
+/* ==========================================================================
+   Surfaces
+
+   A premium electronics store lives or dies on how the product sits on the
+   page, so surfaces are quiet: flat white, one hairline, one soft shadow on
+   hover. No glass here. The dental work used it because a clinic reads as
+   layered and architectural; a product grid reads as a shelf, and anything
+   translucent behind a cut-out product photograph muddies it.
+   ========================================================================== */
+
+@utility surface-card {
+  background-color: var(--color-white);
+  border: 1px solid var(--color-line);
+  box-shadow: 0 1px 2px rgb(13 17 23 / 0.04);
+}
+
+@utility surface-raised {
+  background-color: var(--color-white);
+  border: 1px solid var(--color-line);
+  box-shadow:
+    0 1px 2px rgb(13 17 23 / 0.04),
+    0 12px 28px -12px rgb(13 17 23 / 0.14);
+}
+
+/* The one translucent surface: the navigation, which sits over product
+   photography. backdrop-filter is set once here and never transitioned. */
+@utility surface-nav {
+  background-color: rgb(255 255 255 / 0.86);
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+}
+
+@utility surface-dark {
+  background-color: var(--color-graphite);
+  border: 1px solid var(--color-line-dark);
+}
+
+/* ==========================================================================
+   Layout helpers
+   ========================================================================== */
+
+@utility container-page {
+  width: 100%;
+  max-width: 84rem;
+  margin-inline: auto;
+  padding-inline: var(--spacing-gutter);
+}
+
+@utility container-prose {
+  width: 100%;
+  max-width: 44rem;
+  margin-inline: auto;
+  padding-inline: var(--spacing-gutter);
+}
+
+/* Fixed elements must clear the home indicator on a notched phone. */
+@utility safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* Wide content scrolls inside its own container so the page body never does. */
+@utility scroll-x {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Horizontal rails snap, which is what makes a product rail feel considered
+   rather than a loose overflow. */
+@utility rail {
+  display: flex;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+
+@utility rail-item {
+  scroll-snap-align: start;
+  flex: none;
+}
+
+/* ==========================================================================
+   Typography helpers
+   ========================================================================== */
+
+@utility text-eyebrow {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-grey-strong);
+}
+
+/* Small uppercase labels inside badges and chips. Tracking lives here, once,
+   rather than as a tracking-* utility or an inline style in a component. */
+@utility text-badge {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* Display sizing for the wordmark and the largest headings. Optical tracking
+   is set once here rather than as tracking-* utilities scattered in markup. */
+@utility text-display {
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1.02;
+}
+
+/* Technical data: storage, battery health, SKU, IMEI, dimensions. */
+@utility text-spec {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+/* ==========================================================================
+   Section reveal
+
+   One mechanism site wide: an IntersectionObserver adds data-revealed once,
+   then disconnects. No scroll listeners anywhere, and only transform and
+   opacity move.
+   ========================================================================== */
+
+@layer utilities {
+  [data-reveal] {
+    opacity: 0;
+    transform: translateY(12px);
+    transition:
+      opacity var(--duration-reveal) var(--ease-out-soft),
+      transform var(--duration-reveal) var(--ease-out-soft);
+  }
+
+  [data-reveal][data-revealed='true'] {
+    opacity: 1;
+    transform: none;
+  }
+
+  .rail::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Anyone who asked for less motion gets the content immediately. */
+  @media (prefers-reduced-motion: reduce) {
+    [data-reveal] {
+      opacity: 1;
+      transform: none;
+      transition: none;
+    }
+
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
