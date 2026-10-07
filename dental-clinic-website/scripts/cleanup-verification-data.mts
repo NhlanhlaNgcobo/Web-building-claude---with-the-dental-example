@@ -20,6 +20,11 @@ const VERIFICATION_EMAILS = [
   'second.test@example.co.za',
   'collision.check@example.co.za',
   'collision.second@example.co.za',
+  // Used by the pre-launch check against the deployed site. A booking made
+  // within the 24 hour window cannot be cancelled through the patient API, by
+  // design, so it has to be removed here instead.
+  'verification.check@example.com',
+  'verification.check2@example.com',
 ];
 
 /** Note text used by blocks created during verification. */

@@ -49,5 +49,13 @@ next-env.d.ts
 *.db-wal
 *.db-shm
 
-# The template IS committed; only real secrets are ignored above.
+# Vercel CLI project link and pulled environment variables.
+.vercel
+.env*
+
+# The template IS committed; only real secrets are ignored above. This negation
+# has to stay last: gitignore resolves by last matching pattern, so a later
+# `.env*` would silently re-exclude the one env file that must be in the
+# repository. The Vercel CLI appends to this file, so check the order after it
+# has run.
 !.env.example

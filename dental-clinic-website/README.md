@@ -453,3 +453,25 @@ urgent care.
   with genuinely distinct travel, parking and landmark content. The
   architecture supports more, but adding pages that differ only by place name
   helps nobody and search engines treat them as what they are.
+
+## Recommended follow ups
+
+Neither of these is a defect. Both are places where a guarantee currently lives
+in application code and could be pushed down into the database, which is where
+a guarantee is hardest to bypass.
+
+- **A `CHECK` constraint on `Payment`.** Exactly one of `appointmentId` and
+  `orderId` must be set, and today only the service layer enforces that. Prisma
+  cannot express a `CHECK`, so it needs a hand written migration alongside the
+  overlap constraint:
+
+  ```sql
+  ALTER TABLE "Payment" ADD CONSTRAINT payment_target_exactly_one
+    CHECK (("appointmentId" IS NULL) <> ("orderId" IS NULL));
+  ```
+
+  Worth adding before the payments table has real rows in it, because a
+  constraint added later will refuse to apply if any existing row violates it.
+
+- **Rate limiting** on the booking, lookup and staff sign-in endpoints, as
+  noted above.

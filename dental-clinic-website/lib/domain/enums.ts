@@ -1,13 +1,15 @@
 /**
  * Single source of truth for every status value in the system.
  *
- * SQLite has no native enum type, so every status is stored as a `String`
- * column. To stop that becoming a correctness hole (SQLite will happily store
- * `"pendng"`), each union is declared once here as a `const` tuple and derives
- * three things from it: the runtime array, the TypeScript union, and the Zod
- * schema used at every trust boundary.
+ * Every status is stored as a `String` column rather than a native PostgreSQL
+ * enum. That is a deliberate choice: an enum needs a migration for every new
+ * status value, and it forks the type between the database and TypeScript.
  *
- * Switching to PostgreSQL does not require changing any of this. See README.
+ * The cost is that the database will happily store `"pendng"`, so the
+ * correctness has to live here instead. Each union is declared once as a
+ * `const` tuple and derives three things from it: the runtime array, the
+ * TypeScript union, and the Zod schema used at every trust boundary. Nothing
+ * reaches a status column without passing one of those.
  */
 import { z } from 'zod';
 

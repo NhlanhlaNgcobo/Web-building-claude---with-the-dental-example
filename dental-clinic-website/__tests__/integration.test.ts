@@ -19,12 +19,12 @@ import {
 } from '@/lib/availability/tz';
 
 /**
- * Integration tests: the real loader and service against the seeded SQLite
+ * Integration tests: the real loader and service against a seeded PostgreSQL
  * database. These check that the Prisma layer feeds the pure core correctly,
  * which unit tests on the core cannot catch.
  *
- * Run `npm run db:reset` followed by `npm run db:seed` if these fail after a
- * schema change.
+ * These need DATABASE_URL pointing at a seeded database. Run `npm run db:reset`
+ * followed by `npm run db:seed` if they fail after a schema change.
  */
 
 let exam: ServiceForBooking;

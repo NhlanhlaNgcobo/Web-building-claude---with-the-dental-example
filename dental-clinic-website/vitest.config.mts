@@ -5,8 +5,8 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['__tests__/**/*.test.ts'],
-    // Integration tests share one SQLite file, so they must not run in
-    // parallel against each other.
+    // The database-backed tests share one PostgreSQL database and write to the
+    // diary, so they must not run in parallel against each other.
     fileParallelism: false,
   },
   resolve: {

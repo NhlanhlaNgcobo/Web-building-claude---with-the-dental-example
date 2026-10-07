@@ -1,7 +1,6 @@
 // Harbour Dental Studio: appointment and commerce schema.
 //
-// Running on PostgreSQL. The schema was written so the move from the original
-// SQLite development database was a configuration change rather than a rewrite:
+// Running on PostgreSQL. Decisions worth knowing before changing anything:
 //
 //   - Statuses are String columns backed by TypeScript unions and Zod schemas in
 //     lib/domain/enums.ts. Kept as String rather than converted to a native
@@ -12,8 +11,8 @@
 //     DateTime. A recurring "08:00" is a wall clock fact, not an instant.
 //   - Concrete occurrences (appointments, blocks) are UTC DateTime instants.
 //   - There are no array columns anywhere. Eligibility and product
-//     relationships are explicit join tables, so nothing SQLite specific has to
-//     be unwound later.
+//     relationships are explicit join tables, which keeps the queries plain
+//     and the indexes ordinary B-trees.
 //
 // Double booking is prevented at three levels: the availability engine, a
 // re-check inside the booking transaction, and an exclusion constraint in
@@ -279,8 +278,9 @@ model AppointmentEvent {
   type          String
   /// "patient", "admin" or "system".
   actor String
-  /// JSON encoded detail. SQLite has no Json column type and nothing queries
-  /// inside this field, so a String is sufficient and portable.
+  /// JSON encoded detail. Kept as String rather than Json because nothing
+  /// queries inside this field, and a plain String needs no operator class or
+  /// index decisions.
   payloadJson String?
   createdAt   DateTime @db.Timestamptz(3) @default(now())
 

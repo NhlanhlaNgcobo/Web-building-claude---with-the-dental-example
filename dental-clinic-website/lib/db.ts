@@ -38,11 +38,36 @@ function createClient(): PrismaClient {
   });
 }
 
-export const prisma: PrismaClient = globalForPrisma.prisma ?? createClient();
-
-if (process.env.NODE_ENV !== 'production') {
-  globalForPrisma.prisma = prisma;
+function client(): PrismaClient {
+  if (!globalForPrisma.prisma) {
+    globalForPrisma.prisma = createClient();
+  }
+  return globalForPrisma.prisma;
 }
+
+/**
+ * The client is created on first use rather than when this module is imported.
+ *
+ * That is not an optimisation. `next build` imports every route to collect its
+ * configuration, so a client constructed at import time turns a missing or
+ * briefly unreachable DATABASE_URL into a failed build rather than a failed
+ * request. It also means a platform whose database credentials are scoped to
+ * runtime still builds, which is a perfectly reasonable way to configure one.
+ *
+ * The error still names the variable and says where to set it. It simply
+ * arrives when something actually tries to query.
+ */
+export const prisma: PrismaClient = new Proxy({} as PrismaClient, {
+  get(_target, property, receiver) {
+    const value = Reflect.get(client(), property, receiver) as unknown;
+    // Methods have to keep their `this`, or `prisma.$transaction(...)` loses
+    // the instance it belongs to.
+    return typeof value === 'function' ? value.bind(client()) : value;
+  },
+  has(_target, property) {
+    return property in client();
+  },
+});
 
 /**
  * The transaction client type, used by service functions that must run inside

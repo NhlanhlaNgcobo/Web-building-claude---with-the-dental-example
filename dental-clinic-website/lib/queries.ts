@@ -32,8 +32,9 @@ export async function getDentists(): Promise<DentistCardData[]> {
     lastName: d.lastName,
     role: d.role,
     bio: d.bio,
-    // Stored as a newline separated list, because SQLite has no array column
-    // and the practice edits these as a block of text.
+    // Stored as a newline separated list rather than an array column, because
+    // the practice edits these as a block of text and the schema deliberately
+    // uses no array types.
     focusAreas: d.focusAreas.split('\n').filter(Boolean),
     photoUrl: d.photoUrl,
   }));

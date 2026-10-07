@@ -56,12 +56,19 @@ import { invalidateAvailability } from '@/lib/cache/tags';
  * thrown carrying freshly computed alternatives, so the interface can offer
  * other times instead of a dead end.
  *
- * SQLite serialises writes, so on the development database the transactional
- * re-check is genuinely sufficient: two concurrent bookings cannot interleave
- * between the probe and the insert. A multi-connection PostgreSQL deployment
- * needs a database-level guarantee as well, because there the two transactions
- * can run truly concurrently. See "Moving to PostgreSQL" in README.md for the
- * exclusion constraint that closes that window.
+ * The re-check on its own is not the guarantee. On PostgreSQL two transactions
+ * genuinely run at the same time, so both can pass the probe before either
+ * inserts. What closes that window is the exclusion constraint in migration
+ * 20261005120100:
+ *
+ *   EXCLUDE USING gist (dentistId WITH =,
+ *                       tstzrange(startTime, endTime, '[)') WITH &&)
+ *   WHERE (status <> 'cancelled')
+ *
+ * The constraint is what makes a double booking impossible; the re-check is
+ * what turns the resulting failure into a useful answer, because it can offer
+ * real alternative times instead of a database error. Both are needed, and
+ * neither replaces the other.
  */
 
 /* ------------------------------------------------------------------ */
